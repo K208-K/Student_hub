@@ -1,9 +1,9 @@
 import axios from 'axios';
 
+// ✅ Dynamic BaseURL: Uses Vercel's variable in production, localhost in dev
 const api = axios.create({
-  baseURL: "http://localhost:5000/api",
+  baseURL: import.meta.env.VITE_API_URL || "http://localhost:5000/api",
 });
-
 
 // Request interceptor — attach JWT token to every request
 api.interceptors.request.use(
@@ -17,13 +17,12 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 globally
+// Response interceptor — handle 401 (Unauthorized) globally
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
-      // Redirect to login if not already there
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
