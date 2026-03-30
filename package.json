@@ -1,0 +1,14 @@
+{
+  "name": "student-dashboard",
+  "version": "1.0.0",
+  "description": "College Student Utility Dashboard — Full Stack",
+  "scripts": {
+    "client": "cd client && npm run dev",
+    "server": "cd server && npm run dev",
+    "dev": "cd client && npm run dev",
+    "start": "cd server && npm start"
+  },
+  "keywords": ["student", "dashboard", "react", "express", "mongodb"],
+  "author": "",
+  "license": "ISC"
+}
