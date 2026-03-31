@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from "axios";
+import api from "../utils/api";
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
 import { 
@@ -34,7 +34,7 @@ export default function BunkPlanner() {
     const fetchData = async () => {
       try {
         // 1. Fetch live attendance data to calculate precise impacts
-        const attRes = await axios.get("http://localhost:5000/api/attendance", {
+        const attRes = await api.get("/attendance", {
           headers: { Authorization: `Bearer ${token}` }
         });
         
