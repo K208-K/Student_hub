@@ -15,6 +15,7 @@ app.use(
       const allowedOrigins = [
         "http://localhost:5173",
         "https://student-hub.vercel.app",
+        "https://student-hub-git-main-k208-ks-projects.vercel.app",
       ];
 
       if (!origin || allowedOrigins.includes(origin)) {
