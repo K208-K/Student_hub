@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import api from "../utils/api"; // ✅ Using centralized API utility
+import api from "../utils/api"; 
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
 import { 
@@ -7,7 +7,9 @@ import {
   HiOutlinePencil, 
   HiOutlineCheck, 
   HiOutlineTrash, 
-  HiOutlinePlus 
+  HiOutlineShieldCheck,
+  HiOutlineExclamationCircle,
+  HiOutlineBan
 } from 'react-icons/hi';
 import toast from 'react-hot-toast';
 
@@ -15,26 +17,21 @@ const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 
 export default function BunkPlanner() {
   const { dark } = useTheme();
-  
-  // --- STATE ---
   const [attendanceData, setAttendanceData] = useState({});
   const [availableSubjects, setAvailableSubjects] = useState([]);
   const [timetable, setTimetable] = useState({
     Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: []
   });
-  
   const [isEditing, setIsEditing] = useState(false);
   const [selectedDay, setSelectedDay] = useState('Monday');
   const [subjectToAdd, setSubjectToAdd] = useState('');
 
-  // 🔥 LOAD DATA (Synced with your local server logic)
   useEffect(() => {
     fetchInitialData();
   }, []);
 
   const fetchInitialData = async () => {
     try {
-      // 1. Fetch live attendance data
       const attRes = await api.get("/attendance");
       const subjects = attRes.data.subjects || [];
       setAvailableSubjects(subjects.map(s => s.subject));
@@ -45,172 +42,120 @@ export default function BunkPlanner() {
       });
       setAttendanceData(attLookup);
 
-      // 2. Fetch Timetable from Backend
       const timeRes = await api.get("/timetable");
       if (timeRes.data && timeRes.data.timetable) {
         setTimetable(timeRes.data.timetable);
       }
     } catch (err) {
-      console.error("Fetch error:", err);
-      // Removed manual localStorage fallback to keep it "Clean Server Only"
+      console.error("Sync Error:", err);
     }
   };
 
-  // 🔥 SAVE TO DB (Corrected Logic)
   const saveTimetable = async (updated) => {
     try {
       await api.put("/timetable", { timetable: updated });
-      toast.success("Timetable updated!");
     } catch (err) {
-      console.error("Save error:", err);
-      toast.error("Failed to save to server");
+      toast.error("Cloud Sync Failed");
     }
   };
 
-  // --- CRUD TIMETABLE ---
   const handleAddSubjectToDay = () => {
-    if (!subjectToAdd) return toast.error("Select a subject first");
-    
-    const updated = {
-      ...timetable,
-      [selectedDay]: [...(timetable[selectedDay] || []), subjectToAdd]
-    };
-    
+    if (!subjectToAdd) return;
+    const updated = { ...timetable, [selectedDay]: [...(timetable[selectedDay] || []), subjectToAdd] };
     setTimetable(updated);
     saveTimetable(updated);
     setSubjectToAdd('');
   };
 
   const handleRemoveSubjectFromDay = (day, index) => {
-    const updated = {
-      ...timetable,
-      [day]: timetable[day].filter((_, i) => i !== index)
-    };
+    const updated = { ...timetable, [day]: timetable[day].filter((_, i) => i !== index) };
     setTimetable(updated);
     saveTimetable(updated);
   };
 
-  // --- CALCULATE BUNK IMPACT ---
-  const getDayImpact = (day) => {
+  // 🧠 CORE LOGIC: Determine if a day is "Skipable" or "Risky"
+  const getDayStatus = (day) => {
     const subjectsInDay = timetable[day] || [];
-    let totalImpact = 0;
-    let safeSubjects = 0;
-    const details = [];
+    if (subjectsInDay.length === 0) return null;
 
-    subjectsInDay.forEach(subj => {
-      const att = attendanceData[subj];
-      const total = att ? att.total : 0;
-      const attended = att ? att.attended : 0;
+    let criticalCount = 0;
+    const details = subjectsInDay.map(subj => {
+      const att = attendanceData[subj] || { total: 0, attended: 0 };
+      const total = Number(att.total);
+      const attended = Number(att.attended);
       
-      const currentPct = total > 0 ? (attended / total) * 100 : 0;
-      const afterBunkPct = (total + 1) > 0 ? (attended / (total + 1)) * 100 : 0; 
-      
-      const impact = currentPct - afterBunkPct;
-      const safe = afterBunkPct >= 75; // College standard threshold
+      // Calculate % if you skip today (total + 1)
+      const pctAfterSkip = total + 1 > 0 ? (attended / (total + 1)) * 100 : 0;
+      const isDangerous = pctAfterSkip < 75;
+      if (isDangerous) criticalCount++;
 
-      details.push({ 
-        subject: subj, 
-        currentPct: currentPct.toFixed(1), 
-        afterBunkPct: afterBunkPct.toFixed(1), 
-        impact: impact.toFixed(2), 
-        safe 
-      });
-      
-      totalImpact += impact;
-      if (safe) safeSubjects++;
+      return { subject: subj, nextPct: pctAfterSkip.toFixed(1), isDangerous };
     });
 
-    return {
-      totalImpact: totalImpact.toFixed(2),
-      safeSubjects,
-      totalSubjects: subjectsInDay.length,
-      allSafe: subjectsInDay.length > 0 && safeSubjects === subjectsInDay.length,
-      details,
-      classCount: subjectsInDay.length,
-    };
+    // Ranking Logic
+    let status = "SAFE"; // Default
+    if (criticalCount > 0) status = "RISKY";
+    if (criticalCount >= 2 || criticalCount === subjectsInDay.length) status = "DANGER";
+
+    return { day, status, details, criticalCount };
   };
 
-  const dayRankings = DAYS
-    .map(day => ({ day, ...getDayImpact(day) }))
-    .filter(item => item.classCount > 0)
-    .sort((a, b) => a.totalImpact - b.totalImpact);
-
-  const getBunkScore = (item) => {
-    const impactVal = Number(item.totalImpact);
-    if (item.allSafe) return { label: '🟢 Safe to Bunk', color: 'text-green-500 bg-green-500/10 border-green-500/20' };
-    if (impactVal < 3) return { label: '🟡 Minor Risk', color: 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20' };
-    return { label: '🔴 Highly Risky', color: 'text-red-500 bg-red-500/10 border-red-500/20' };
-  };
+  const processedDays = DAYS.map(d => getDayStatus(d)).filter(d => d !== null);
 
   return (
-    <div className={`relative min-h-screen p-6 md:p-12 overflow-hidden transition-colors duration-500 ${dark ? 'bg-[#0a0f1d] text-white' : 'bg-slate-50 text-slate-900'}`}>
+    <div className={`min-h-screen p-4 md:p-10 font-sans transition-colors duration-500 ${dark ? 'text-white' : 'text-slate-900'}`}>
       
-      {/* Background Ambient Orbs (Same UI style as Attendance) */}
-      <div className="fixed top-[-10%] left-[-10%] w-[40vw] h-[40vw] rounded-full bg-green-500/10 blur-[100px] pointer-events-none" />
-      <div className="fixed bottom-[-10%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-blue-500/10 blur-[120px] pointer-events-none" />
+      <div className="fixed top-[-10%] left-[-5%] w-[50vw] h-[50vw] rounded-full bg-red-500/5 blur-[120px] pointer-events-none" />
+      <div className="fixed bottom-[-5%] right-[-5%] w-[40vw] h-[40vw] rounded-full bg-blue-500/5 blur-[120px] pointer-events-none" />
 
-      <div className="relative z-10 max-w-5xl mx-auto space-y-8">
+      <div className="relative z-10 max-w-5xl mx-auto space-y-10">
         
         {/* HEADER */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-cyan-500/20 rounded-2xl text-cyan-500 border border-cyan-500/30 shadow-lg">
-              <HiOutlineFire className="text-3xl" />
+        <header className="glass p-8 rounded-[40px] border border-white/10 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-5">
+            <div className="p-4 bg-red-500/20 rounded-3xl text-red-500 border border-red-500/20 backdrop-blur-xl">
+              <HiOutlineFire className="text-4xl" />
             </div>
             <div>
-              <h1 className="text-3xl font-black uppercase italic tracking-tighter">Bunk Planner</h1>
-              <p className="opacity-40 text-[10px] font-bold uppercase tracking-widest">Attendance Impact Calculator</p>
+              <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">Bunk <span className="text-red-500">Intelligence</span></h1>
+              <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-30 mt-2">Skip classes without getting debarred</p>
             </div>
           </div>
-
+          
           <button 
             onClick={() => setIsEditing(!isEditing)} 
-            className={`px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg transition-all flex items-center gap-2 ${isEditing ? 'bg-green-500 text-white' : 'glass border border-white/10 hover:bg-white/10'}`}
+            className={`btn-glass px-10 py-4 flex items-center gap-3 text-[10px] font-black uppercase tracking-widest transition-all ${isEditing ? 'bg-primary-500 text-white shadow-primary-500/30' : ''}`}
           >
             {isEditing ? <HiOutlineCheck className="text-xl" /> : <HiOutlinePencil className="text-xl" />}
-            {isEditing ? 'Save Week' : 'Edit Timetable'}
+            {isEditing ? 'Finish Setup' : 'Edit Timetable'}
           </button>
-        </div>
+        </header>
 
-        {/* --- TIMETABLE EDITOR --- */}
+        {/* EDITOR SECTION */}
         <AnimatePresence>
           {isEditing && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-              <div className="glass p-6 md:p-8 shadow-xl mb-8 border border-white/10">
-                <h3 className="text-lg font-black uppercase mb-6 italic">Setup your Routine</h3>
-                
-                <div className="flex flex-col md:flex-row gap-4 mb-8 p-4 bg-black/10 rounded-2xl">
-                  <select 
-                    value={selectedDay} onChange={e => setSelectedDay(e.target.value)}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 font-bold outline-none text-cyan-500"
-                  >
-                    {DAYS.map(d => <option key={d} value={d} className="bg-slate-900">{d}</option>)}
+              <div className="glass p-8 rounded-[40px] border border-white/20 shadow-2xl mb-10">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-white/5 rounded-3xl mb-8">
+                  <select value={selectedDay} onChange={e => setSelectedDay(e.target.value)} className="input-glass p-3 font-bold uppercase text-[10px] tracking-widest">
+                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
-
-                  <select 
-                    value={subjectToAdd} onChange={e => setSubjectToAdd(e.target.value)}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 font-bold outline-none text-cyan-500"
-                  >
-                    <option value="" className="bg-slate-900">Select Subject</option>
-                    {availableSubjects.map(s => <option key={s} value={s} className="bg-slate-900">{s}</option>)}
+                  <select value={subjectToAdd} onChange={e => setSubjectToAdd(e.target.value)} className="input-glass p-3 font-bold uppercase text-[10px] tracking-widest">
+                    <option value="">Select Subject</option>
+                    {availableSubjects.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
-
-                  <button onClick={handleAddSubjectToDay} className="bg-cyan-500 text-white px-6 rounded-xl font-black text-xs uppercase tracking-widest hover:brightness-110">
-                    Add Class
-                  </button>
+                  <button onClick={handleAddSubjectToDay} className="bg-primary-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:scale-105 transition-all shadow-lg">Add to Day</button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                   {DAYS.map(day => (
-                    <div key={day} className="bg-black/10 p-4 rounded-2xl border border-white/5">
-                      <h4 className="font-black text-xs uppercase tracking-widest mb-3 text-cyan-500">{day}</h4>
+                    <div key={day} className="bg-black/20 p-4 rounded-[25px] border border-white/5 min-h-[120px]">
+                      <h4 className="font-black text-[10px] uppercase tracking-widest mb-3 opacity-40">{day}</h4>
                       <div className="space-y-2">
                         {timetable[day]?.map((subj, idx) => (
-                          <div key={idx} className="flex justify-between items-center bg-white/5 p-2 px-3 rounded-xl text-xs">
-                            <span className="truncate font-bold opacity-80">{subj}</span>
-                            <button onClick={() => handleRemoveSubjectFromDay(day, idx)} className="text-red-500">
-                              <HiOutlineTrash />
-                            </button>
+                          <div key={idx} className="flex justify-between items-center bg-white/5 p-2 px-3 rounded-xl group transition-all">
+                            <span className="text-[10px] font-bold truncate mr-2">{subj}</span>
+                            <button onClick={() => handleRemoveSubjectFromDay(day, idx)} className="text-red-500"><HiOutlineTrash /></button>
                           </div>
                         ))}
                       </div>
@@ -222,59 +167,79 @@ export default function BunkPlanner() {
           )}
         </AnimatePresence>
 
-        {/* --- BEST DAY TO BUNK HERO --- */}
-        {!isEditing && dayRankings.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass p-10 relative overflow-hidden shadow-2xl border border-green-500/20 text-center">
-            <div className="relative z-10">
-              <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40 mb-2">Recommendation</p>
-              <h2 className="text-7xl font-black italic tracking-tighter text-green-500 mb-4">{dayRankings[0]?.day}</h2>
-              <div className="inline-block bg-green-500/10 px-6 py-2 rounded-full border border-green-500/20">
-                <p className="font-black text-xs uppercase tracking-widest opacity-80">
-                   Impact: -{dayRankings[0]?.totalImpact}% Overall
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* --- RANKINGS LIST --- */}
+        {/* --- MAIN RISK DISPLAY --- */}
         {!isEditing && (
-          <div className="space-y-4">
-            {dayRankings.map((item, i) => {
-              const score = getBunkScore(item);
-              return (
-                <motion.div key={item.day} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} className="glass p-6 shadow-lg border border-white/5 group">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${i === 0 ? 'bg-green-500 text-white' : 'bg-white/5'}`}>
-                        {i + 1}
+          <div className="space-y-6">
+            {processedDays.length === 0 ? (
+              <div className="text-center py-20 opacity-20">
+                <HiOutlineBan className="text-6xl mx-auto mb-4" />
+                <p className="font-black uppercase tracking-widest text-xs">Define your timetable to see risk levels</p>
+              </div>
+            ) : (
+              processedDays.map((item, i) => (
+                <motion.div 
+                  key={item.day} 
+                  initial={{ opacity: 0, x: -20 }} 
+                  animate={{ opacity: 1, x: 0 }} 
+                  transition={{ delay: i * 0.1 }}
+                  className={`glass p-8 rounded-[40px] border transition-all shadow-xl group ${
+                    item.status === 'SAFE' ? 'border-emerald-500/20' : 
+                    item.status === 'RISKY' ? 'border-yellow-500/20' : 'border-red-500/20'
+                  }`}
+                >
+                  <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-6">
+                    <div className="flex items-center gap-6">
+                      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl shadow-inner ${
+                        item.status === 'SAFE' ? 'bg-emerald-500 text-white' : 
+                        item.status === 'RISKY' ? 'bg-yellow-500 text-black' : 'bg-red-500 text-white'
+                      }`}>
+                         {item.day[0]}
                       </div>
                       <div>
-                        <h3 className="font-black text-xl uppercase italic">{item.day}</h3>
-                        <p className="text-[10px] font-black uppercase tracking-widest opacity-40">{item.classCount} Lectures</p>
+                        <h3 className="font-black text-2xl uppercase italic tracking-tighter">{item.day}</h3>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-30">{item.details.length} Classes Today</p>
                       </div>
                     </div>
-                    <span className={`text-[10px] px-4 py-2 rounded-full font-black uppercase tracking-widest border ${score.color}`}>
-                      {score.label}
-                    </span>
+
+                    <div className={`px-6 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-[0.2em] flex items-center gap-3 ${
+                      item.status === 'SAFE' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 
+                      item.status === 'RISKY' ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-400' : 
+                      'border-red-500/30 bg-red-500/10 text-red-400'
+                    }`}>
+                       {item.status === 'SAFE' ? <HiOutlineShieldCheck className="text-xl" /> : 
+                        item.status === 'RISKY' ? <HiOutlineExclamationCircle className="text-xl" /> : 
+                        <HiOutlineBan className="text-xl" />}
+                       {item.status === 'SAFE' ? 'Safe to Skip Today' : 
+                        item.status === 'RISKY' ? 'Risky - 75% Alert' : 'Critical - Do Not Bunk'}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Subject Breakdown */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 pt-8 border-t border-white/5">
                     {item.details.map((d, j) => (
-                      <div key={j} className="p-3 rounded-2xl bg-black/10 border border-white/5">
-                        <p className="text-[11px] font-black uppercase truncate mb-2 opacity-80">{d.subject}</p>
-                        <div className="flex items-center justify-between">
-                           <span className={`text-xs font-black ${d.safe ? 'text-green-500' : 'text-red-500'}`}>{d.afterBunkPct}%</span>
-                           <span className="text-[9px] font-bold opacity-30">Min 75%</span>
+                      <div key={j} className={`p-5 rounded-[30px] bg-black/20 border border-white/5 ${d.isDangerous ? 'border-red-500/30' : ''}`}>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-30 mb-3 truncate">{d.subject}</p>
+                        <div className="flex justify-between items-end">
+                           <div>
+                              <p className="text-[8px] font-black opacity-30 uppercase mb-1">Resulting %</p>
+                              <p className={`text-xl font-black tracking-tighter ${d.isDangerous ? 'text-red-400' : 'text-emerald-400'}`}>{d.nextPct}%</p>
+                           </div>
+                           <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black ${d.isDangerous ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
+                              {d.isDangerous ? '!' : '✓'}
+                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </motion.div>
-              );
-            })}
+              ))
+            )}
           </div>
         )}
+
+        <footer className="mt-20 text-center opacity-10 pb-10">
+           <p className="text-[10px] font-black uppercase tracking-[1em]">SKIP INTELLIGENCE UNIT</p>
+        </footer>
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import axios from "axios";
+import { useState, useEffect, useRef, useCallback } from 'react';
+import api from "../utils/api"; // Centralized API
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTheme } from '../context/ThemeContext';
 import { 
@@ -8,102 +8,82 @@ import {
   HiOutlineTrash, 
   HiCheck, 
   HiOutlineClock, 
-  HiOutlineAcademicCap 
+  HiOutlineAcademicCap,
+  HiOutlineFire,
+  HiOutlineSparkles,
+  HiOutlineBookmark
 } from 'react-icons/hi';
 import toast from 'react-hot-toast';
 
+const MODES = {
+  work: { label: 'Focus', time: 25 * 60, color: 'text-primary-500', stroke: '#3b82f6', icon: HiOutlineFire },
+  shortBreak: { label: 'Short Break', time: 5 * 60, color: 'text-success-500', stroke: '#22c55e', icon: HiOutlineSparkles },
+  longBreak: { label: 'Long Break', time: 15 * 60, color: 'text-accent-500', stroke: '#8b5cf6', icon: HiOutlineBookmark }
+};
+
 export default function StudyPlanner() {
   const { dark } = useTheme();
-
-  // --- TASK STATE ---
   const [tasks, setTasks] = useState([]);
   const [newTask, setNewTask] = useState('');
   const [newSubject, setNewSubject] = useState('');
   const [newPriority, setNewPriority] = useState('medium');
+  const [showAddForm, setShowAddForm] = useState(false);
+  const saveTimerRef = useRef(null);
 
-  const token = localStorage.getItem("token");
-
-  // 🔥 LOAD FROM BACKEND
+  // 🔥 LOAD FROM BACKEND (Production Ready)
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/planner", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await api.get("/planner");
         setTasks(res.data.tasks || []);
       } catch (err) {
         console.error("Fetch error:", err);
       }
     };
     fetchData();
-  }, [token]);
+  }, []);
 
-  // 🔥 SAVE TO DB
-  const saveToDB = async (updated) => {
-    try {
-      await axios.put(
-        "http://localhost:5000/api/planner",
-        { tasks: updated },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-    } catch (err) {
-      console.error("Save error:", err);
-    }
-  };
+  // ☁️ DEBOUNCED SAVE
+  const saveToDB = useCallback((updated) => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await api.put("/planner", { tasks: updated });
+      } catch (err) {
+        console.error("Save error:", err);
+      }
+    }, 1500);
+  }, []);
 
-  // ➕ ADD TASK
-  const addTask = async () => {
+  // ➕ ACTIONS
+  const addTask = () => {
     if (!newTask.trim()) return;
-
     const updated = [
       ...tasks,
-      {
-        id: Date.now(),
-        title: newTask,
-        subject: newSubject || 'General',
-        priority: newPriority,
-        completed: false,
-        dueDate: ''
-      }
+      { id: Date.now(), title: newTask, subject: newSubject || 'General', priority: newPriority, completed: false }
     ];
-
     setTasks(updated);
-    await saveToDB(updated);
-
+    saveToDB(updated);
     setNewTask('');
     setNewSubject('');
-    toast.success('Task added!');
+    setShowAddForm(false);
+    toast.success('Goal set!');
   };
 
-  // ✅ TOGGLE TASK
-  const toggleTask = async (id) => {
-    const updated = tasks.map(t =>
-      t.id === id ? { ...t, completed: !t.completed } : t
-    );
+  const toggleTask = (id) => {
+    const updated = tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
     setTasks(updated);
-    await saveToDB(updated);
+    saveToDB(updated);
   };
 
-  // ❌ DELETE TASK
-  const deleteTask = async (id) => {
+  const deleteTask = (id) => {
     const updated = tasks.filter(t => t.id !== id);
     setTasks(updated);
-    await saveToDB(updated);
-    toast.success('Task removed');
+    saveToDB(updated);
+    toast.error('Task removed');
   };
 
-  // --- STATS ---
-  const completedCount = tasks.filter(t => t.completed).length;
-  const totalCount = tasks.length;
-  const progressPct = totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100);
-
-  // --- POMODORO STATE & LOGIC ---
-  const MODES = {
-    work: { label: 'Focus', time: 25 * 60, color: 'text-primary-500', stroke: '#3b82f6' },
-    shortBreak: { label: 'Short Break', time: 5 * 60, color: 'text-success-500', stroke: '#22c55e' },
-    longBreak: { label: 'Long Break', time: 15 * 60, color: 'text-accent-500', stroke: '#8b5cf6' }
-  };
-
+  // --- POMODORO LOGIC ---
   const [pomodoroType, setPomodoroType] = useState('work');
   const [pomodoroTime, setPomodoroTime] = useState(MODES.work.time);
   const [pomodoroMaxTime, setPomodoroMaxTime] = useState(MODES.work.time);
@@ -115,11 +95,10 @@ export default function StudyPlanner() {
       intervalRef.current = setInterval(() => setPomodoroTime(p => p - 1), 1000);
     } else if (pomodoroTime === 0 && pomodoroRunning) {
       setPomodoroRunning(false);
-      toast.success(pomodoroType === 'work' ? '🎉 Focus session complete!' : '💪 Break over! Back to work!');
-      
-      // Auto-switch mode
-      if (pomodoroType === 'work') switchMode('shortBreak');
-      else switchMode('work');
+      const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+      audio.play();
+      toast.success(pomodoroType === 'work' ? 'Focus session complete!' : 'Break over!');
+      switchMode(pomodoroType === 'work' ? 'shortBreak' : 'work');
     }
     return () => clearInterval(intervalRef.current);
   }, [pomodoroRunning, pomodoroTime]);
@@ -131,240 +110,156 @@ export default function StudyPlanner() {
     setPomodoroMaxTime(MODES[mode].time);
   };
 
-  const formatTime = (s) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
-
-  // SVG Circle Math for Pomodoro
-  const radius = 90;
+  const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  const radius = 80;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (pomodoroTime / pomodoroMaxTime) * circumference;
 
-  // Helpers
-  const priorityStyles = {
-    high: 'bg-danger-500/10 text-danger-500 border-danger-500/20',
-    medium: 'bg-warning-500/10 text-warning-500 border-warning-500/20',
-    low: 'bg-success-500/10 text-success-500 border-success-500/20'
-  };
-
   return (
-    <div className="relative min-h-screen p-6 md:p-12 overflow-hidden font-sans text-sm md:text-base">
+    <div className={`min-h-screen p-4 md:p-10 relative overflow-hidden transition-colors duration-500 ${dark ? 'text-white' : 'text-slate-900'}`}>
       
-      {/* Background Ambient Orbs */}
-      <div className="fixed top-[-10%] left-[-10%] w-[40vw] h-[40vw] rounded-full bg-primary-400/20 blur-[100px] pointer-events-none" />
-      <div className="fixed top-[30%] right-[-10%] w-[40vw] h-[40vw] rounded-full bg-accent-500/20 blur-[120px] pointer-events-none" />
-      <div className="fixed bottom-[-10%] left-[20%] w-[50vw] h-[50vw] rounded-full bg-primary-600/20 blur-[100px] pointer-events-none" />
+      {/* 🔮 DYNAMIC BACKGROUND */}
+      <div className="fixed top-[-10%] left-[-5%] w-[50vw] h-[50vw] rounded-full bg-primary-500/10 blur-[120px] pointer-events-none" />
+      <div className="fixed bottom-[-5%] right-[-5%] w-[40vw] h-[40vw] rounded-full bg-purple-500/10 blur-[120px] pointer-events-none" />
 
       <div className="relative z-10 max-w-7xl mx-auto">
         
-        {/* HEADER & GLOBAL PROGRESS */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-10">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-500/20 rounded-2xl text-primary-500 backdrop-blur-md border border-primary-500/30 shadow-lg">
-              <HiOutlineCalendar className="text-3xl" />
+        {/* HEADER SECTION */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
+          <div className="flex items-center gap-5">
+            <div className="p-4 bg-primary-500/20 rounded-3xl text-primary-500 border border-primary-500/30 shadow-2xl backdrop-blur-xl">
+              <HiOutlineCalendar className="text-4xl" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold gradient-text inline-block">Study Command Center</h1>
-              <p className="opacity-70 text-sm mt-1">Plan, track, and conquer your studies</p>
+              <h1 className="text-4xl font-black italic tracking-tighter uppercase">Study Planner</h1>
+              <p className="text-[10px] font-black uppercase tracking-[0.4em] opacity-40">Optimize. Focus. Conquer.</p>
             </div>
           </div>
 
-          {/* Progress Widget */}
-          <div className="glass px-6 py-4 rounded-2xl flex flex-col gap-2 w-full md:w-64 shadow-xl">
-            <div className="flex justify-between items-center text-sm font-bold">
-              <span>Daily Progress</span>
-              <span className="text-primary-500">{progressPct}%</span>
+          <div className="glass px-8 py-4 rounded-[30px] border border-white/10 shadow-xl flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-[9px] font-black uppercase opacity-40 tracking-widest">Progress</p>
+              <p className="text-2xl font-black text-primary-400">{Math.round((tasks.filter(t=>t.completed).length / (tasks.length || 1)) * 100)}%</p>
             </div>
-            <div className="h-2 w-full bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
-              <motion.div 
-                initial={{ width: 0 }}
-                animate={{ width: `${progressPct}%` }}
-                className="h-full bg-linear-to-r from-primary-500 to-accent-500"
-              />
+            <div className="w-16 h-16 relative">
+               <svg className="w-full h-full transform -rotate-90">
+                  <circle cx="32" cy="32" r="28" fill="transparent" stroke="currentColor" strokeWidth="4" className="text-white/5" />
+                  <circle cx="32" cy="32" r="28" fill="transparent" stroke="#3b82f6" strokeWidth="4" strokeDasharray={175.9} strokeDashoffset={175.9 - (tasks.filter(t=>t.completed).length / (tasks.length || 1)) * 175.9} strokeLinecap="round" />
+               </svg>
             </div>
-            <p className="text-xs opacity-60 text-right">{completedCount} of {totalCount} tasks completed</p>
           </div>
-        </div>
+        </header>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
           
-          {/* LEFT COLUMN: TASK MANAGER */}
-          <div className="xl:col-span-2 space-y-6">
+          {/* TASK VIEW */}
+          <div className="lg:col-span-8 space-y-8">
             
-            {/* ADD TASK FORM */}
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass p-6 shadow-xl">
-              <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                <HiOutlinePlus className="text-primary-500" /> New Assignment
-              </h3>
-              
-              <div className="flex flex-col md:flex-row gap-4">
-                <input
-                  value={newTask}
-                  onChange={e => setNewTask(e.target.value)}
-                  placeholder="What needs to be done?"
-                  className="input-glass flex-1 outline-none focus:ring-2 focus:ring-primary-500/50 text-base py-3 px-4"
-                  onKeyDown={(e) => e.key === 'Enter' && addTask()}
-                />
-                
-                <div className="flex gap-4">
-                  <div className="relative w-full md:w-40 flex items-center">
-                    <HiOutlineAcademicCap className="absolute left-3 opacity-50" />
-                    <input
-                      value={newSubject}
-                      onChange={e => setNewSubject(e.target.value)}
-                      placeholder="Subject"
-                      className="input-glass w-full pl-9 py-3 outline-none focus:ring-2 focus:ring-primary-500/50"
+            {/* ADD TASK TRIGGER */}
+            <AnimatePresence>
+              {!showAddForm ? (
+                <motion.button 
+                  whileHover={{ scale: 1.02 }}
+                  onClick={() => setShowAddForm(true)}
+                  className="w-full py-6 border-2 border-dashed border-primary-500/30 rounded-[35px] flex items-center justify-center gap-3 text-primary-400 font-black uppercase tracking-widest text-xs hover:bg-primary-500/5 transition-all"
+                >
+                  <HiOutlinePlus className="text-xl" /> Create New Study Goal
+                </motion.button>
+              ) : (
+                <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="glass p-8 rounded-[40px] border border-primary-500/20 shadow-2xl">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <input 
+                      value={newTask} onChange={e => setNewTask(e.target.value)} 
+                      placeholder="Goal Title..." className="input-glass p-4 rounded-2xl font-bold" 
+                    />
+                    <input 
+                      value={newSubject} onChange={e => setNewSubject(e.target.value)} 
+                      placeholder="Subject (e.g. AI/ML)" className="input-glass p-4 rounded-2xl" 
                     />
                   </div>
-                  
-                  <select
-                    value={newPriority}
-                    onChange={e => setNewPriority(e.target.value)}
-                    className={`input-glass py-3 w-32 outline-none focus:ring-2 focus:ring-primary-500/50 ${dark ? 'bg-surface-800' : 'bg-white'}`}
-                  >
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
+                  <div className="flex justify-between items-center">
+                    <div className="flex gap-2">
+                      {['high', 'medium', 'low'].map(p => (
+                        <button key={p} onClick={() => setNewPriority(p)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${newPriority === p ? 'bg-primary-500 text-white shadow-lg' : 'bg-white/5 opacity-40'}`}>{p}</button>
+                      ))}
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={() => setShowAddForm(false)} className="px-6 py-3 text-xs font-bold opacity-40">Cancel</button>
+                      <button onClick={addTask} className="bg-primary-500 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg shadow-primary-500/40">Add Goal</button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-                  <button 
-                    onClick={addTask} 
-                    className="bg-primary-500 hover:bg-primary-600 text-white px-6 rounded-xl font-bold shadow-lg shadow-primary-500/30 transition-all hover:scale-105 active:scale-95 flex items-center justify-center shrink-0"
+            {/* TASK CARDS GRID */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <AnimatePresence mode='popLayout'>
+                {tasks.map(task => (
+                  <motion.div 
+                    key={task.id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, x: -20 }}
+                    className={`glass p-6 rounded-[35px] border border-white/10 group relative transition-all ${task.completed ? 'opacity-40' : 'hover:border-primary-500/50 shadow-xl'}`}
                   >
-                    Add
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* TASK LIST */}
-            <div className="space-y-3">
-              <AnimatePresence>
-                {tasks.length === 0 ? (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass p-10 text-center opacity-70 border-dashed">
-                    No tasks remaining. Time to relax or add a new goal!
-                  </motion.div>
-                ) : (
-                  tasks.map(task => (
-                    <motion.div 
-                      key={task.id}
-                      layout
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, x: -50 }}
-                      className={`glass p-4 md:p-5 flex items-center gap-4 group transition-all duration-300 ${task.completed ? 'opacity-60 bg-black/5 dark:bg-white/5' : 'shadow-lg hover:shadow-xl hover:bg-white/40 dark:hover:bg-black/40'}`}
+                    <div className="flex justify-between items-start mb-4">
+                      <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-tighter border ${task.priority === 'high' ? 'border-red-500 text-red-500' : 'border-cyan-500 text-cyan-500'}`}>
+                        {task.priority}
+                      </span>
+                      <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-red-500 p-2 hover:bg-red-500/10 rounded-full transition-all">
+                        <HiOutlineTrash />
+                      </button>
+                    </div>
+                    <h3 className={`text-lg font-bold mb-1 truncate ${task.completed ? 'line-through' : ''}`}>{task.title}</h3>
+                    <p className="text-[10px] font-black uppercase opacity-30 tracking-widest mb-6">{task.subject}</p>
+                    
+                    <button 
+                      onClick={() => toggleTask(task.id)}
+                      className={`w-full py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${task.completed ? 'bg-green-500 text-white' : 'bg-primary-500/10 text-primary-400 border border-primary-500/20'}`}
                     >
-                      {/* Custom Animated Checkbox */}
-                      <button 
-                        onClick={() => toggleTask(task.id)}
-                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors duration-300 ${task.completed ? 'bg-primary-500 border-primary-500 text-white' : 'border-primary-500/50 text-transparent hover:border-primary-500'}`}
-                      >
-                        <HiCheck className="text-sm" />
-                      </button>
-
-                      {/* Task Content */}
-                      <div className="flex-1 min-w-0">
-                        <p className={`font-semibold text-lg truncate transition-all duration-300 ${task.completed ? 'line-through opacity-70' : ''}`}>
-                          {task.title}
-                        </p>
-                      </div>
-
-                      {/* Badges (Hidden on tiny screens, shown on md+) */}
-                      <div className="hidden md:flex items-center gap-2">
-                        <span className="px-3 py-1 rounded-full text-xs font-bold border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 uppercase tracking-wider">
-                          {task.subject}
-                        </span>
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase tracking-wider ${priorityStyles[task.priority]}`}>
-                          {task.priority}
-                        </span>
-                      </div>
-
-                      {/* Delete Button */}
-                      <button 
-                        onClick={() => deleteTask(task.id)}
-                        className="p-2 text-danger-500 opacity-0 group-hover:opacity-100 hover:bg-danger-500/10 rounded-xl transition-all"
-                      >
-                        <HiOutlineTrash className="text-xl" />
-                      </button>
-                    </motion.div>
-                  ))
-                )}
+                      {task.completed ? <><HiCheck className="inline mr-2" /> Done</> : 'Complete Goal'}
+                    </button>
+                  </motion.div>
+                ))}
               </AnimatePresence>
             </div>
           </div>
 
-          {/* RIGHT COLUMN: POMODORO WIDGET */}
-          <div className="xl:col-span-1">
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="glass p-8 shadow-2xl rounded-4xl sticky top-8 flex flex-col items-center">
-              
-              <div className="flex items-center gap-2 mb-8">
-                <HiOutlineClock className="text-2xl opacity-70" />
-                <h3 className="font-bold text-xl">Timer</h3>
-              </div>
-
-              {/* Mode Selector Tabs */}
-              <div className="flex bg-black/5 dark:bg-white/5 rounded-full p-1 mb-8 w-full border border-black/10 dark:border-white/10">
-                {Object.keys(MODES).map(mode => (
-                  <button
-                    key={mode}
-                    onClick={() => switchMode(mode)}
-                    className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-full transition-all ${pomodoroType === mode ? 'bg-white dark:bg-surface-800 shadow-md text-primary-500' : 'opacity-60 hover:opacity-100'}`}
-                  >
-                    {MODES[mode].label}
+          {/* POMODORO COLUMN */}
+          <div className="lg:col-span-4">
+            <motion.div initial={{ x: 30, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="glass p-10 rounded-[50px] border border-white/10 shadow-2xl sticky top-10 flex flex-col items-center">
+              <div className="flex gap-3 mb-10 w-full">
+                {Object.keys(MODES).map(m => (
+                  <button key={m} onClick={() => switchMode(m)} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase transition-all ${pomodoroType === m ? 'bg-primary-500 text-white shadow-lg shadow-primary-500/30' : 'bg-white/5 opacity-40'}`}>
+                    {MODES[m].label.split(' ')[0]}
                   </button>
                 ))}
               </div>
 
-              {/* Glowing SVG Timer Ring */}
-              <div className="relative w-55 h-55 flex items-center justify-center mb-8">
-                {/* Background Ring */}
-                <svg className="absolute w-full h-full transform -rotate-90">
-                  <circle
-                    cx="110" cy="110" r={radius}
-                    fill="transparent"
-                    strokeWidth="10"
-                    className="stroke-black/5 dark:stroke-white/5"
-                  />
-                  {/* Progress Ring */}
-                  <motion.circle
-                    cx="110" cy="110" r={radius}
-                    fill="transparent"
-                    strokeWidth="10"
-                    strokeLinecap="round"
-                    stroke={MODES[pomodoroType].stroke}
-                    strokeDasharray={circumference}
-                    animate={{ strokeDashoffset }}
-                    transition={{ duration: 1, ease: "linear" }}
-                    className="drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]"
-                  />
-                </svg>
-
-                {/* Digital Time Display */}
-                <div className="absolute flex flex-col items-center">
-                  <span className={`text-5xl font-mono font-bold tracking-tighter ${MODES[pomodoroType].color}`}>
-                    {formatTime(pomodoroTime)}
-                  </span>
-                  <span className="text-xs uppercase tracking-widest opacity-50 mt-1">
-                    {MODES[pomodoroType].label}
-                  </span>
-                </div>
+              {/* TIMER RING */}
+              <div className="relative w-64 h-64 flex items-center justify-center mb-10">
+                 <svg className="absolute w-full h-full transform -rotate-90">
+                    <circle cx="128" cy="128" r={radius} fill="transparent" stroke="currentColor" strokeWidth="12" className="text-white/5" />
+                    <motion.circle 
+                      cx="128" cy="128" r={radius} fill="transparent" stroke={MODES[pomodoroType].stroke} strokeWidth="12" strokeLinecap="round"
+                      animate={{ strokeDashoffset }} transition={{ duration: 1, ease: 'linear' }}
+                      strokeDasharray={circumference}
+                      className="drop-shadow-[0_0_15px_rgba(59,130,246,0.3)]"
+                    />
+                 </svg>
+                 <div className="text-center z-10">
+                    <p className={`text-6xl font-black tracking-tighter ${MODES[pomodoroType].color}`}>{formatTime(pomodoroTime)}</p>
+                    <p className="text-[10px] font-black uppercase opacity-30 tracking-[0.4em] mt-2">Focus Mode</p>
+                 </div>
               </div>
 
-              {/* Controls */}
               <div className="flex gap-4 w-full">
-                <button
+                <button 
                   onClick={() => setPomodoroRunning(!pomodoroRunning)}
-                  className={`flex-1 py-4 rounded-2xl font-bold text-lg shadow-lg transition-all hover:scale-105 active:scale-95 ${pomodoroRunning ? 'bg-warning-500 text-white shadow-warning-500/30' : 'bg-primary-500 text-white shadow-primary-500/30'}`}
+                  className={`flex-1 py-5 rounded-[25px] font-black uppercase tracking-widest text-xs shadow-xl transition-all ${pomodoroRunning ? 'bg-orange-500' : 'bg-primary-500 shadow-primary-500/30'}`}
                 >
-                  {pomodoroRunning ? 'PAUSE' : 'START'}
+                  {pomodoroRunning ? 'Pause' : 'Start'}
                 </button>
-                
-                <button
-                  onClick={() => switchMode(pomodoroType)}
-                  className="px-6 py-4 rounded-2xl font-bold border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                >
-                  RESET
-                </button>
+                <button onClick={() => switchMode(pomodoroType)} className="p-5 rounded-[25px] bg-white/5 border border-white/10"><HiOutlineClock className="text-xl" /></button>
               </div>
-
             </motion.div>
           </div>
 
