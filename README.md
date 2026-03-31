@@ -7,8 +7,7 @@ Student Hub combines productivity tools, academic analytics, and AI-powered assi
 
 ## 🚀 Live Demo
 
-* **Frontend (Vercel):** *Add your Vercel link here*
-* **Backend API (Render):** *Add your Render link here*
+https://student-hub-git-main-k208-ks-projects.vercel.app/dashboard
 
 ---
 
