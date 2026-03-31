@@ -56,18 +56,23 @@ export default function Profile() {
   };
 
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
+  const file = e.target.files[0];
 
-    if (!file) return;
+  if (!file) return;
 
-    const reader = new FileReader();
+  if (file.size > 2 * 1024 * 1024) {
+    toast.error("Image must be below 2MB");
+    return;
+  }
 
-    reader.onloadend = () => {
-      setProfilePic(reader.result);
-    };
+  const reader = new FileReader();
 
-    reader.readAsDataURL(file);
+  reader.onloadend = () => {
+    setProfilePic(reader.result);
   };
+
+  reader.readAsDataURL(file);
+};
 
   const handleSave = async () => {
     setSaving(true);
