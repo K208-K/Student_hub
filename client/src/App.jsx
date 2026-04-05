@@ -17,6 +17,7 @@ import ExamCountdown from './pages/ExamCountdown';
 import NoticeBoard from './pages/NoticeBoard';
 import AIDoubtSolver from './pages/AIDoubtSolver';
 import Profile from './pages/Profile';
+import Homework from './pages/Homework';
 
 // 1. IMPORT YOUR NEW TIMETABLE PAGE 👇
 import TimeTable from './pages/TimeTable'; 
@@ -84,6 +85,7 @@ export default function App() {
               <Route path="exams" element={<ExamCountdown />} />
               <Route path="notices" element={<NoticeBoard />} />
               <Route path="ai" element={<AIDoubtSolver />} />
+              <Route path="homework" element={<Homework />} />
               <Route path="profile" element={<Profile />} />
             </Route>
 
