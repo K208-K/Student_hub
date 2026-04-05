@@ -9,7 +9,7 @@ import {
   HiOutlineBell, HiOutlineChatAlt2, HiOutlineClock, HiOutlineLightBulb,
   HiOutlineChartBar, HiOutlineLogout, HiOutlineSun, HiOutlineMoon,
   HiOutlineMenu, HiOutlineX, HiOutlineUser, HiOutlineBookOpen,
-  HiOutlineFire
+  HiOutlineFire, HiOutlinePencilAlt
 } from 'react-icons/hi';
 
 const navItems = [
@@ -24,6 +24,7 @@ const navItems = [
   { path: '/placement', icon: HiOutlineLightBulb, label: 'Placement Prep' },
   { path: '/bunk', icon: HiOutlineFire, label: 'Bunk Planner' },
   { path: '/exams', icon: HiOutlineClock, label: 'Exam Hub' },
+  { path: '/homework', icon: HiOutlinePencilAlt, label: 'Homework' },
   { path: '/notices', icon: HiOutlineBell, label: 'Notice Board' },
   { path: '/ai', icon: HiOutlineChatAlt2, label: 'AI Doubt Solver' },
   { path: '/profile', icon: HiOutlineUser, label: 'Profile' },
